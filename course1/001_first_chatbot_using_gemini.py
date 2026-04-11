@@ -48,8 +48,8 @@ def simple_agent(prompt):
 
 
 # limit the response to 200 words to limit tokens
-question = "explain ai agent - as you would explain to a 5 year old, limit your response to 200 words"
+question = "explain RAG in agentic AI - as you would explain to a 5 year old, limit your response to 200 words"
 answer = simple_agent(question)
 
-print("ques:", question)
-print("ans:", answer)
+print("\n\n\nques:\n", question)
+print("\n\nans:\n", answer)
