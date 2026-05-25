@@ -79,7 +79,7 @@ def print_summary(records: list) -> None:
     records: list of (chunk_label, first_page, last_page, size_bytes, break_kind).
     """
     pretty = {"chapter": "chapter end", "section": "major-section end",
-              "page": "page boundary"}
+              "page": "page boundary", "end": "document end"}
     headers = ["Chunk", "Original pages", "Size", "Break at"]
     rows = [[label, f"{first}–{last}", f"{size:,} B", pretty.get(kind, kind)]
             for (label, first, last, size, kind) in records]
@@ -146,35 +146,46 @@ def split_pdf(input_path: str, max_bytes: int, outdir: str) -> None:
             j += 1
 
         # `end` is now the furthest page that fits by size (the size ceiling).
-        # Choose the break point by strict priority:
-        #   1. chapter end (level 1)        -> pack whole chapters
-        #   2. major-section end (level 2)  -> only if a chapter is too big to fit
-        #   3. raw page                     -> only if a section alone exceeds size
         max_end = end
-        chapter_candidates = [c for c in chapter_starts if i < c <= max_end + 1]
-        section_candidates = [s for s in section_starts if i < s <= max_end + 1]
 
-        if chapter_candidates:
-            end = max(chapter_candidates) - 1
-            break_kind = "chapter"
-        elif section_candidates:
-            end = max(section_candidates) - 1
-            break_kind = "section"
-            warnings.append(
-                f"part{part:02d} (pages {i + 1}-{end + 1}) ends mid-chapter at a "
-                f"major-section boundary: chapter starting at page {i + 1} is larger "
-                f"than the {max_bytes:,}-byte limit.")
-        else:
+        if max_end == n - 1:
+            # All remaining pages fit -> this is the final chunk. There is no
+            # "next chunk" to align, so take everything and do NOT split. (This
+            # is the fix for a chapter that fits but was being needlessly cut
+            # because no further chapter boundary existed after it.)
             end = max_end
-            break_kind = "page"
-            if i != n - 1:  # a lone final page isn't really an abrupt cut
-                warnings.append(
-                    f"part{part:02d} (pages {i + 1}-{end + 1}) had to be cut at a raw "
-                    f"page boundary: a single major section exceeds the "
-                    f"{max_bytes:,}-byte limit. Consider a larger --max_size.")
+            break_kind = "end"
+        else:
+            # Must split. Choose the break point by strict priority:
+            #   1. chapter end (level 1)        -> pack whole chapters
+            #   2. major-section end (level 2)  -> only if a chapter is too big
+            #   3. raw page                     -> only if a section exceeds size
+            chapter_candidates = [c for c in chapter_starts if i < c <= max_end + 1]
+            section_candidates = [s for s in section_starts if i < s <= max_end + 1]
 
-        if not (i <= end <= max_end):      # safety net
-            end, break_kind = max_end, "page"
+            if chapter_candidates:
+                end = max(chapter_candidates) - 1
+                break_kind = "chapter"
+            elif section_candidates:
+                end = max(section_candidates) - 1
+                break_kind = "section"
+                warnings.append(
+                    f"part{part:02d} (pages {i + 1}-{end + 1}) was split mid-chapter at "
+                    f"a major-section boundary because the chapter starting on page "
+                    f"{i + 1} is larger than the {max_bytes:,}-byte limit. Sections in "
+                    f"this PDF can start mid-page, so a line or two may carry over to "
+                    f"the next chunk. Use a larger --max_size to keep the chapter whole.")
+            else:
+                end = max_end
+                break_kind = "page"
+                warnings.append(
+                    f"part{part:02d} (pages {i + 1}-{end + 1}) was cut at a raw page "
+                    f"boundary: a single major section exceeds the {max_bytes:,}-byte "
+                    f"limit, so a clean chapter/section break was impossible. Use a "
+                    f"larger --max_size.")
+
+            if not (i <= end <= max_end):      # safety net
+                end, break_kind = max_end, "page"
 
         # Build the final chunk document for this range.
         chunk = pymupdf.open()
@@ -198,7 +209,8 @@ def split_pdf(input_path: str, max_bytes: int, outdir: str) -> None:
         flag = "  <-- OVER LIMIT" if size > max_bytes else ""
         label = {"chapter": "[chapter end]",
                  "section": "[major-section end]",
-                 "page": "[page boundary]"}[break_kind]
+                 "page": "[page boundary]",
+                 "end": "[document end]"}[break_kind]
         print(f"  {out_name}: original pages {i + 1}-{end + 1} "
               f"({end - i + 1} pages), {size:,} bytes {label}{flag}")
 
@@ -206,13 +218,24 @@ def split_pdf(input_path: str, max_bytes: int, outdir: str) -> None:
         part += 1
         i = end + 1
 
-    src.close()
-    print(f"\nDone. Wrote {part - 1} chunk(s) to {outdir}\n")
     print_summary(records)
     if warnings:
+        # Recommend a size at which every chapter fits whole (fully clean splits).
+        chapters = sorted(chapter_starts)
+        bounds = chapters + [n]
+        largest = max(
+            (len(chunk_bytes(src, bounds[k], bounds[k + 1] - 1))
+             for k in range(len(chapters))),
+            default=0)
+        rec = ((largest // (50 * 1024)) + 1) * 50 * 1024  # round up to next 50 KB
         print("\nWarnings:")
         for w in warnings:
             print(f"  ! {w}")
+        print(f"\nTip: the largest single chapter is {largest:,} bytes "
+              f"(~{largest / 1024:.0f} KB). Use --max_size {rec // 1024}KB or larger "
+              f"and every chunk will break cleanly at a chapter boundary.")
+    src.close()
+    print(f"\nDone. Wrote {part - 1} chunk(s) to {outdir}")
 
 
 def main() -> None:
