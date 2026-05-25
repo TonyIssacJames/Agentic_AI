@@ -97,3 +97,40 @@ Speed (CPU): each page is decoded autoregressively -- roughly seconds to
 Example
 -------
     .\.venv\Scripts\python.exe pdf_to_md.py attention_is_all_you_need.pdf --model .\nougat-small --pages 1-2
+
+
+===========================================================================
+Additional setup notes / alternative workflows (verbatim, do not change cmds)
+===========================================================================
+
+Core Method
+-----------
+# Download the model locally, force offline mode so transformers/HF won't try
+# the network, then run the converter against the local model folder.
+# NOTE: --model path below is .\models\nougat-small; adjust it to wherever you
+# downloaded the model (this project uses .\nougat-small).
+pip install huggingface_hub
+huggingface-cli download facebook/nougat-small --local-dir nougat-small
+set HF_HUB_OFFLINE=1
+set TRANSFORMERS_OFFLINE=1
+python pdf_to_md.py attention_is_all_you_need.pdf --model .\models\nougat-small
+
+
+
+Alternate method
+----------------
+# Uses the standalone Nougat CLI instead of this script. albumentations is
+# pinned to 1.3.1 for compatibility with nougat-ocr. --full-precision helps CPU.
+pip install "albumentations==1.3.1"
+nougat attention_is_all_you_need.pdf -o . --full-precision
+
+Step 1 - PDF -> .mmd (Nougat CLI):
+pip install nougat-ocr
+nougat attention_is_all_you_need.pdf -o . --full-precision
+
+Step 2 - .mmd -> .md (the converter I just made):
+python mmd_to_md.py attention_is_all_you_need.mmd
+
+# Full two-step run:
+nougat attention_is_all_you_need.pdf -o . --full-precision
+python mmd_to_md.py attention_is_all_you_need.mmd
